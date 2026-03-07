@@ -1,0 +1,1 @@
+##add moving averages, returns, volatility, RSI if you want

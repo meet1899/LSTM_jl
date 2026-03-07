@@ -1,0 +1,1 @@
+##read CSV or fetch market data
