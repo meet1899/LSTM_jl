@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import random
 
 import numpy as np
 import pandas as pd
 
+from src.config import TrainingConfig
+from src.evaluate import evaluate_split
 from src.preprocessing import chronological_split, scale_splits_train_only
 from src.sequence import create_sequences, create_sequences_with_past_context
 
@@ -26,6 +29,17 @@ class PreparedTrainingData:
     target_col: str
     feature_scaler: object
     target_scaler: object
+
+
+@dataclass(frozen=True)
+class TrainingArtifacts:
+    """Model, history, metrics, and processed arrays from a full training run."""
+
+    model: object
+    history: dict[str, list[float]]
+    prepared: PreparedTrainingData
+    val_metrics: dict[str, float]
+    test_metrics: dict[str, float]
 
 
 def prepare_training_data(
@@ -90,3 +104,120 @@ def prepare_training_data(
         feature_scaler=scaled.feature_scaler,
         target_scaler=scaled.target_scaler,
     )
+
+
+def set_random_seed(seed: int) -> None:
+    """Seed Python, NumPy, and TensorFlow when available."""
+    random.seed(seed)
+    np.random.seed(seed)
+
+    try:
+        import tensorflow as tf
+    except ModuleNotFoundError:
+        return
+
+    tf.random.set_seed(seed)
+
+
+def _require_tensorflow():
+    try:
+        from tensorflow import keras
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "TensorFlow is required for model training. Install it before running Step 3B training."
+        ) from exc
+    return keras
+
+
+def build_lstm_model(input_shape: tuple[int, int]):
+    """Create the baseline LSTM used for validation-aware training."""
+    keras = _require_tensorflow()
+
+    model = keras.Sequential(
+        [
+            keras.layers.Input(shape=input_shape),
+            keras.layers.LSTM(64, return_sequences=True),
+            keras.layers.LSTM(64),
+            keras.layers.Dense(25, activation="relu"),
+            keras.layers.Dense(1),
+        ]
+    )
+    model.compile(optimizer="adam", loss="mse")
+    return model
+
+
+def train_model(df: pd.DataFrame, config: TrainingConfig) -> tuple[object, object, PreparedTrainingData]:
+    """Train the LSTM on train data and monitor validation loss."""
+    keras = _require_tensorflow()
+    set_random_seed(config.random_seed)
+
+    prepared = prepare_training_data(
+        df=df,
+        target_col=config.target_col,
+        feature_cols=list(config.feature_cols),
+        lookback=config.lookback,
+        train_ratio=config.train_ratio,
+        val_ratio=config.val_ratio,
+    )
+
+    model = build_lstm_model(
+        input_shape=(prepared.x_train.shape[1], prepared.x_train.shape[2])
+    )
+
+    callbacks = [
+        keras.callbacks.EarlyStopping(
+            monitor="val_loss",
+            patience=config.early_stopping_patience,
+            restore_best_weights=True,
+        )
+    ]
+
+    history = model.fit(
+        prepared.x_train,
+        prepared.y_train,
+        validation_data=(prepared.x_val, prepared.y_val),
+        epochs=config.epochs,
+        batch_size=config.batch_size,
+        callbacks=callbacks,
+        verbose=0,
+    )
+
+    return model, history, prepared
+
+
+def train_and_evaluate(df: pd.DataFrame, config: TrainingConfig | None = None) -> TrainingArtifacts:
+    """Run the full Step 3B workflow: train, validate, then test once."""
+    config = config or TrainingConfig()
+
+    model, history, prepared = train_model(df, config)
+
+    val_metrics = evaluate_split(
+        model=model,
+        x_data=prepared.x_val,
+        y_data=prepared.y_val,
+        target_scaler=prepared.target_scaler,
+    )
+    test_metrics = evaluate_split(
+        model=model,
+        x_data=prepared.x_test,
+        y_data=prepared.y_test,
+        target_scaler=prepared.target_scaler,
+    )
+
+    return TrainingArtifacts(
+        model=model,
+        history=history.history,
+        prepared=prepared,
+        val_metrics=val_metrics,
+        test_metrics=test_metrics,
+    )
+
+
+def run_training_pipeline(
+    csv_path: str,
+    config: TrainingConfig | None = None,
+) -> TrainingArtifacts:
+    """Convenience entrypoint for loading CSV data and training the model."""
+    config = config or TrainingConfig()
+    df = pd.read_csv(csv_path)
+    return train_and_evaluate(df=df, config=config)
