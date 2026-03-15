@@ -8,8 +8,13 @@ import random
 import numpy as np
 import pandas as pd
 
+from src.baselines import (
+    linear_regression_baseline,
+    moving_average_baseline,
+    naive_last_value_baseline,
+)
 from src.config import TrainingConfig
-from src.evaluate import evaluate_split
+from src.evaluate import SplitEvaluation, evaluate_predictions, evaluate_split, format_metrics
 from src.preprocessing import chronological_split, scale_splits_train_only
 from src.sequence import create_sequences, create_sequences_with_past_context
 
@@ -33,13 +38,14 @@ class PreparedTrainingData:
 
 @dataclass(frozen=True)
 class TrainingArtifacts:
-    """Model, history, metrics, and processed arrays from a full training run."""
+    """Model, history, split evaluations, and processed arrays from a full training run."""
 
     model: object
     history: dict[str, list[float]]
     prepared: PreparedTrainingData
-    val_metrics: dict[str, float]
-    test_metrics: dict[str, float]
+    val_results: SplitEvaluation
+    test_results: SplitEvaluation
+    baseline_results: dict[str, dict[str, SplitEvaluation]]
 
 
 def prepare_training_data(
@@ -185,31 +191,67 @@ def train_model(df: pd.DataFrame, config: TrainingConfig) -> tuple[object, objec
     return model, history, prepared
 
 
+def run_baselines(
+    prepared: PreparedTrainingData,
+    target_feature_index: int = 0,
+) -> dict[str, dict[str, SplitEvaluation]]:
+    """Evaluate naive, moving-average, and linear-regression baselines."""
+    baseline_results: dict[str, dict[str, SplitEvaluation]] = {}
+
+    naive_val_pred = naive_last_value_baseline(prepared.x_val, target_feature_index)
+    naive_test_pred = naive_last_value_baseline(prepared.x_test, target_feature_index)
+    baseline_results["naive_last_value"] = {
+        "val": evaluate_predictions(prepared.y_val, naive_val_pred, prepared.target_scaler),
+        "test": evaluate_predictions(prepared.y_test, naive_test_pred, prepared.target_scaler),
+    }
+
+    moving_val_pred = moving_average_baseline(prepared.x_val, target_feature_index)
+    moving_test_pred = moving_average_baseline(prepared.x_test, target_feature_index)
+    baseline_results["moving_average"] = {
+        "val": evaluate_predictions(prepared.y_val, moving_val_pred, prepared.target_scaler),
+        "test": evaluate_predictions(prepared.y_test, moving_test_pred, prepared.target_scaler),
+    }
+
+    linear_val_pred = linear_regression_baseline(prepared.x_train, prepared.y_train, prepared.x_val)
+    linear_test_pred = linear_regression_baseline(prepared.x_train, prepared.y_train, prepared.x_test)
+    baseline_results["linear_regression"] = {
+        "val": evaluate_predictions(prepared.y_val, linear_val_pred, prepared.target_scaler),
+        "test": evaluate_predictions(prepared.y_test, linear_test_pred, prepared.target_scaler),
+    }
+
+    return baseline_results
+
+
 def train_and_evaluate(df: pd.DataFrame, config: TrainingConfig | None = None) -> TrainingArtifacts:
-    """Run the full Step 3B workflow: train, validate, then test once."""
+    """Run the full training workflow: train, validate, then test once."""
     config = config or TrainingConfig()
 
     model, history, prepared = train_model(df, config)
 
-    val_metrics = evaluate_split(
+    val_results = evaluate_split(
         model=model,
         x_data=prepared.x_val,
         y_data=prepared.y_val,
         target_scaler=prepared.target_scaler,
     )
-    test_metrics = evaluate_split(
+    test_results = evaluate_split(
         model=model,
         x_data=prepared.x_test,
         y_data=prepared.y_test,
         target_scaler=prepared.target_scaler,
+    )
+    baseline_results = run_baselines(
+        prepared=prepared,
+        target_feature_index=config.baseline_target_feature_index,
     )
 
     return TrainingArtifacts(
         model=model,
         history=history.history,
         prepared=prepared,
-        val_metrics=val_metrics,
-        test_metrics=test_metrics,
+        val_results=val_results,
+        test_results=test_results,
+        baseline_results=baseline_results,
     )
 
 
@@ -220,4 +262,12 @@ def run_training_pipeline(
     """Convenience entrypoint for loading CSV data and training the model."""
     config = config or TrainingConfig()
     df = pd.read_csv(csv_path)
-    return train_and_evaluate(df=df, config=config)
+    results = train_and_evaluate(df=df, config=config)
+
+    print("LSTM Validation:", format_metrics(results.val_results.metrics))
+    print("LSTM Test:", format_metrics(results.test_results.metrics))
+    for baseline_name, split_results in results.baseline_results.items():
+        print(f"{baseline_name} Validation:", format_metrics(split_results["val"].metrics))
+        print(f"{baseline_name} Test:", format_metrics(split_results["test"].metrics))
+
+    return results

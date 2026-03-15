@@ -11,6 +11,7 @@ class TrainingConfig:
 
     target_col: str = "close"
     feature_cols: tuple[str, ...] = ("close",)
+    baseline_target_feature_index: int = 0
     lookback: int = 60
     train_ratio: float = 0.70
     val_ratio: float = 0.15
