@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from dataclasses import dataclass
+from pathlib import Path
 import random
 
 import numpy as np
@@ -14,9 +16,12 @@ from src.baselines import (
     naive_last_value_baseline,
 )
 from src.config import TrainingConfig
+from src.data_loader import load_stock_csv
 from src.evaluate import SplitEvaluation, evaluate_predictions, evaluate_split, format_metrics
+from src.features import finalize_features
 from src.preprocessing import chronological_split, scale_splits_train_only
 from src.sequence import create_sequences, create_sequences_with_past_context
+from src.utils import ensure_dir, save_json, save_pickle
 
 
 @dataclass(frozen=True)
@@ -50,7 +55,7 @@ class TrainingArtifacts:
 
 def prepare_training_data(
     df: pd.DataFrame,
-    target_col: str = "Close",
+    target_col: str = "close",
     feature_cols: list[str] | None = None,
     lookback: int = 60,
     train_ratio: float = 0.70,
@@ -135,20 +140,24 @@ def _require_tensorflow():
     return keras
 
 
-def build_lstm_model(input_shape: tuple[int, int]):
+def build_lstm_model(input_shape: tuple[int, int], config: TrainingConfig):
     """Create the baseline LSTM used for validation-aware training."""
     keras = _require_tensorflow()
+
+    optimizer = keras.optimizers.Adam(learning_rate=config.learning_rate)
 
     model = keras.Sequential(
         [
             keras.layers.Input(shape=input_shape),
-            keras.layers.LSTM(64, return_sequences=True),
-            keras.layers.LSTM(64),
-            keras.layers.Dense(25, activation="relu"),
+            keras.layers.LSTM(config.lstm_units_1, return_sequences=True),
+            keras.layers.Dropout(config.dropout_rate),
+            keras.layers.LSTM(config.lstm_units_2),
+            keras.layers.Dropout(config.dropout_rate),
+            keras.layers.Dense(config.dense_units, activation="relu"),
             keras.layers.Dense(1),
         ]
     )
-    model.compile(optimizer="adam", loss="mse")
+    model.compile(optimizer=optimizer, loss="mse")
     return model
 
 
@@ -156,6 +165,8 @@ def train_model(df: pd.DataFrame, config: TrainingConfig) -> tuple[object, objec
     """Train the LSTM on train data and monitor validation loss."""
     keras = _require_tensorflow()
     set_random_seed(config.random_seed)
+    models_dir = ensure_dir(config.models_dir)
+    checkpoint_path = models_dir / config.checkpoint_name
 
     prepared = prepare_training_data(
         df=df,
@@ -167,7 +178,8 @@ def train_model(df: pd.DataFrame, config: TrainingConfig) -> tuple[object, objec
     )
 
     model = build_lstm_model(
-        input_shape=(prepared.x_train.shape[1], prepared.x_train.shape[2])
+        input_shape=(prepared.x_train.shape[1], prepared.x_train.shape[2]),
+        config=config,
     )
 
     callbacks = [
@@ -175,7 +187,13 @@ def train_model(df: pd.DataFrame, config: TrainingConfig) -> tuple[object, objec
             monitor="val_loss",
             patience=config.early_stopping_patience,
             restore_best_weights=True,
-        )
+        ),
+        keras.callbacks.ModelCheckpoint(
+            filepath=str(checkpoint_path),
+            monitor="val_loss",
+            save_best_only=True,
+            save_weights_only=False,
+        ),
     ]
 
     history = model.fit(
@@ -189,6 +207,67 @@ def train_model(df: pd.DataFrame, config: TrainingConfig) -> tuple[object, objec
     )
 
     return model, history, prepared
+
+
+def save_training_artifacts(results: TrainingArtifacts, config: TrainingConfig) -> dict[str, Path]:
+    """Persist the trained model, scalers, config, metrics, and predictions."""
+    models_dir = ensure_dir(config.models_dir)
+    results_dir = ensure_dir(config.results_dir)
+
+    model_path = models_dir / "lstm_model.keras"
+    feature_scaler_path = models_dir / "feature_scaler.pkl"
+    target_scaler_path = models_dir / "target_scaler.pkl"
+    metadata_path = models_dir / "metadata.json"
+    metrics_path = results_dir / "metrics.json"
+    predictions_path = results_dir / "predictions.json"
+
+    results.model.save(model_path)
+    save_pickle(results.prepared.feature_scaler, feature_scaler_path)
+    save_pickle(results.prepared.target_scaler, target_scaler_path)
+
+    metadata = {
+        "target_col": config.target_col,
+        "feature_cols": list(config.feature_cols),
+        "config": {
+            key: str(value) if isinstance(value, Path) else value
+            for key, value in asdict(config).items()
+        },
+    }
+    save_json(metadata, metadata_path)
+
+    metrics_payload = {
+        "lstm": {
+            "val": results.val_results.metrics,
+            "test": results.test_results.metrics,
+        },
+        "baselines": {
+            name: {
+                "val": split_results["val"].metrics,
+                "test": split_results["test"].metrics,
+            }
+            for name, split_results in results.baseline_results.items()
+        },
+        "history": results.history,
+    }
+    save_json(metrics_payload, metrics_path)
+
+    predictions_payload = {
+        "val_actuals": results.val_results.actuals.tolist(),
+        "val_predictions": results.val_results.predictions.tolist(),
+        "test_actuals": results.test_results.actuals.tolist(),
+        "test_predictions": results.test_results.predictions.tolist(),
+    }
+    save_json(predictions_payload, predictions_path)
+
+    return {
+        "model": model_path,
+        "feature_scaler": feature_scaler_path,
+        "target_scaler": target_scaler_path,
+        "metadata": metadata_path,
+        "metrics": metrics_path,
+        "predictions": predictions_path,
+        "checkpoint": Path(config.models_dir) / config.checkpoint_name,
+    }
 
 
 def run_baselines(
@@ -227,6 +306,10 @@ def train_and_evaluate(df: pd.DataFrame, config: TrainingConfig | None = None) -
     config = config or TrainingConfig()
 
     model, history, prepared = train_model(df, config)
+    if config.target_col in prepared.feature_cols:
+        target_feature_index = prepared.feature_cols.index(config.target_col)
+    else:
+        target_feature_index = config.baseline_target_feature_index
 
     val_results = evaluate_split(
         model=model,
@@ -242,7 +325,7 @@ def train_and_evaluate(df: pd.DataFrame, config: TrainingConfig | None = None) -
     )
     baseline_results = run_baselines(
         prepared=prepared,
-        target_feature_index=config.baseline_target_feature_index,
+        target_feature_index=target_feature_index,
     )
 
     return TrainingArtifacts(
@@ -258,10 +341,12 @@ def train_and_evaluate(df: pd.DataFrame, config: TrainingConfig | None = None) -
 def run_training_pipeline(
     csv_path: str,
     config: TrainingConfig | None = None,
+    save_artifacts: bool = True,
 ) -> TrainingArtifacts:
     """Convenience entrypoint for loading CSV data and training the model."""
     config = config or TrainingConfig()
-    df = pd.read_csv(csv_path)
+    df = load_stock_csv(csv_path)
+    df = finalize_features(df)
     results = train_and_evaluate(df=df, config=config)
 
     print("LSTM Validation:", format_metrics(results.val_results.metrics))
@@ -269,5 +354,10 @@ def run_training_pipeline(
     for baseline_name, split_results in results.baseline_results.items():
         print(f"{baseline_name} Validation:", format_metrics(split_results["val"].metrics))
         print(f"{baseline_name} Test:", format_metrics(split_results["test"].metrics))
+
+    if save_artifacts:
+        artifact_paths = save_training_artifacts(results, config)
+        for artifact_name, artifact_path in artifact_paths.items():
+            print(f"Saved {artifact_name}:", artifact_path)
 
     return results

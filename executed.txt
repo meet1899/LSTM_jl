@@ -1,0 +1,156 @@
+Changes So Far
+
+We turned the project from a mostly notebook-style setup into a working `src/` training pipeline for the early parts of the plan.
+
+In [preprocessing.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/preprocessing.py), I implemented the Step 3A foundation:
+- `chronological_split(...)` splits the dataframe into `train`, `val`, and `test` in time order, with no shuffling.
+- `scale_splits_train_only(...)` fits `StandardScaler` only on training data, then transforms validation and test using the train-fitted scalers.
+- `assert_no_scaler_leakage(...)` checks that scaler statistics actually match training-only data.
+This fixed the original leakage problem from the notebook, where scaling was done on the full dataset before splitting.
+
+In [sequence.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/sequence.py), I added reusable sequence creation:
+- `create_sequences(...)` builds `(X, y)` windows from a split.
+- `create_sequences_with_past_context(...)` lets validation and test use only prior history for their lookback windows.
+This matters because the first validation/test samples still need prior context, but they must not see future rows.
+
+In [train.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/train.py), I first added `PreparedTrainingData` and `prepare_training_data(...)` so the whole no-leakage split/scale/sequence flow can be called from one place. That completed Step 3A in modular form.
+
+Then I implemented Step 3B in the same file:
+- `TrainingConfig` from [config.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/config.py) is used to control lookback, split ratios, epochs, batch size, seed, and early stopping patience.
+- `set_random_seed(...)` makes runs more reproducible.
+- `_require_tensorflow()` gives a clean error if TensorFlow is missing.
+- `build_lstm_model(...)` defines the baseline LSTM.
+- `train_model(...)` trains on `x_train, y_train` and validates on `x_val, y_val`.
+- `train_and_evaluate(...)` evaluates only after training is done.
+- `run_training_pipeline(...)` loads a CSV and runs the whole pipeline.
+This changed the workflow from “just prepare arrays” to “actually train with validation and reserve test for final evaluation.”
+
+In [evaluate.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/evaluate.py), I implemented Step 3C:
+- `inverse_transform_targets(...)` converts scaled values back to real prices.
+- `direction_accuracy(...)` measures whether the model gets the up/down movement right.
+- `regression_metrics(...)` now returns `mae`, `rmse`, `mape`, and `direction_accuracy`.
+- `SplitEvaluation` stores metrics plus original-scale `actuals` and `predictions`.
+- `evaluate_split(...)` evaluates model outputs.
+- `format_metrics(...)` prints a readable summary.
+This made evaluation more realistic and useful, not just training loss.
+
+Then I implemented Step 3D by adding baseline models. In [baselines.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/baselines.py), I added:
+- `naive_last_value_baseline(...)`
+- `moving_average_baseline(...)`
+- `linear_regression_baseline(...)`
+In [evaluate.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/evaluate.py), I added `evaluate_predictions(...)` so precomputed baseline predictions can be scored the same way as the LSTM. In [train.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/train.py), I added:
+- `baseline_results` into `TrainingArtifacts`
+- `run_baselines(...)`
+- printing of LSTM vs baseline validation/test metrics in `run_training_pipeline(...)`
+This gave us a real benchmark, and the result was important: the current LSTM underperforms the naive and linear baselines on your dataset.
+
+In [requirements.txt](/C:/Users/meetp/files/PROJECTS/LSTM_jl/requirements.txt), I added the dependencies the code now relies on:
+- `numpy`
+- `pandas`
+- `scikit-learn`
+- `tensorflow`
+
+In [plan.txt](/C:/Users/meetp/files/PROJECTS/LSTM_jl/plan.txt), we also updated the project plan and agreed to treat it as the canonical plan for this repo.
+
+Step 4 Changes
+
+In [features.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/features.py), I replaced the placeholder with real feature engineering code:
+- `add_price_features(...)` now adds `return_1d`, `ma_7`, `ma_20`, `ma_50`, `volatility_7`, `high_low_spread`, `close_open_spread`, and `lag_1` to `lag_3`.
+- `finalize_features(...)` applies feature generation and drops the top rows made incomplete by rolling windows and lag columns.
+This changed the model input from a single `close` series to a richer multivariate feature set.
+
+In [data_loader.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/data_loader.py), I added `load_stock_csv(...)`:
+- reads the CSV
+- parses `date` as datetime when present
+- sorts the dataset chronologically
+- resets the index
+This keeps the time-series assumptions intact before splitting and sequence creation.
+
+In [config.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/config.py), I expanded `feature_cols` from `("close",)` to the full engineered feature list:
+- `open`
+- `high`
+- `low`
+- `close`
+- `volume`
+- `return_1d`
+- `ma_7`
+- `ma_20`
+- `ma_50`
+- `volatility_7`
+- `high_low_spread`
+- `close_open_spread`
+- `lag_1`
+- `lag_2`
+- `lag_3`
+This tells the scaling, sequence, LSTM, and baseline logic to use the richer feature matrix.
+
+In [train.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/train.py), I made the pipeline feature-aware:
+- changed the default `target_col` in `prepare_training_data(...)` to `close`
+- imported and used `load_stock_csv(...)` instead of raw `pd.read_csv(...)`
+- imported and used `finalize_features(...)` before training begins
+- updated `train_and_evaluate(...)` to compute the correct baseline target feature index dynamically from `prepared.feature_cols`
+This ensured that the naive and moving-average baselines still read the true target column after the input feature order became multivariate.
+
+After Step 4, I reran the LSTM-vs-baselines comparison on the engineered feature set. The code executed end to end, but the current LSTM still underperformed the simpler baselines. That result was useful, because it confirmed that richer features alone were not enough to make the LSTM competitive yet.
+
+Step 5 Changes
+
+In [config.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/config.py), I expanded `TrainingConfig` so model and training settings are configurable rather than hardcoded:
+- increased default `epochs` from `20` to `50`
+- increased `early_stopping_patience` from `5` to `8`
+- added `learning_rate`
+- added `lstm_units_1`
+- added `lstm_units_2`
+- added `dense_units`
+- added `dropout_rate`
+- added `models_dir`
+- added `results_dir`
+- added `checkpoint_name`
+This made the training process tunable and reusable without editing the model code every time.
+
+In [train.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/train.py), I upgraded the LSTM training flow:
+- `build_lstm_model(...)` now accepts `config`
+- the model now uses configurable LSTM layer sizes
+- I added dropout after each LSTM layer
+- I switched the optimizer setup to configurable Adam learning rate
+- `train_model(...)` now creates the models directory if needed
+- I added `ModelCheckpoint(...)` alongside `EarlyStopping(...)`
+- the best validation model is now written to `models/best_lstm.keras`
+This implemented the core Step 5 goals: stronger training controls, configurable hyperparameters, and checkpointing based on validation loss.
+
+Step 6 Changes
+
+In [utils.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/utils.py), I replaced the empty file with artifact-saving helpers:
+- `ensure_dir(...)`
+- `save_pickle(...)`
+- `save_json(...)`
+These helpers are used by the training pipeline to persist model outputs and metadata in a consistent format.
+
+In [train.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/train.py), I added `save_training_artifacts(...)`:
+- saves the trained model to `models/lstm_model.keras`
+- saves the feature scaler to `models/feature_scaler.pkl`
+- saves the target scaler to `models/target_scaler.pkl`
+- saves metadata to `models/metadata.json`
+- saves metrics and training history to `results/metrics.json`
+- saves actuals and predictions to `results/predictions.json`
+I also updated `run_training_pipeline(...)` to accept `save_artifacts=True` and print the saved paths after training.
+
+During verification of Step 5 and Step 6:
+- the code compiled successfully with `python -m py_compile`
+- `ModelCheckpoint` successfully created `models/best_lstm.keras`
+- the full default feature-rich training run exceeded the environment timeout, so I could not complete a full default run inside this session
+- I separately verified the artifact-writing path and confirmed the expected files were created under `models/` and `results/`
+
+The saved files confirmed after Step 6 were:
+- [best_lstm.keras](/C:/Users/meetp/files/PROJECTS/LSTM_jl/models/best_lstm.keras)
+- [lstm_model.keras](/C:/Users/meetp/files/PROJECTS/LSTM_jl/models/lstm_model.keras)
+- [feature_scaler.pkl](/C:/Users/meetp/files/PROJECTS/LSTM_jl/models/feature_scaler.pkl)
+- [target_scaler.pkl](/C:/Users/meetp/files/PROJECTS/LSTM_jl/models/target_scaler.pkl)
+- [metadata.json](/C:/Users/meetp/files/PROJECTS/LSTM_jl/models/metadata.json)
+- [metrics.json](/C:/Users/meetp/files/PROJECTS/LSTM_jl/results/metrics.json)
+- [predictions.json](/C:/Users/meetp/files/PROJECTS/LSTM_jl/results/predictions.json)
+
+One important practical note from Steps 5 and 6:
+- the implementation is in place and verified at the file/output level
+- the current default training configuration is now heavy enough that it hits the environment timeout
+- that means the next pragmatic improvement is likely to add a lightweight debug config for faster verification runs while preserving the richer production-style defaults

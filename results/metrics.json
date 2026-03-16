@@ -1,0 +1,40 @@
+{
+  "lstm": {
+    "val": {
+      "mae": 1.0,
+      "rmse": 1.0,
+      "mape": 1.0,
+      "direction_accuracy": 0.5
+    },
+    "test": {
+      "mae": 1.0,
+      "rmse": 1.0,
+      "mape": 1.0,
+      "direction_accuracy": 0.5
+    }
+  },
+  "baselines": {
+    "naive_last_value": {
+      "val": {
+        "mae": 1.0,
+        "rmse": 1.0,
+        "mape": 1.0,
+        "direction_accuracy": 0.5
+      },
+      "test": {
+        "mae": 1.0,
+        "rmse": 1.0,
+        "mape": 1.0,
+        "direction_accuracy": 0.5
+      }
+    }
+  },
+  "history": {
+    "loss": [
+      1.0
+    ],
+    "val_loss": [
+      1.1
+    ]
+  }
+}
