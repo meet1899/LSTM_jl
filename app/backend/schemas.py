@@ -22,6 +22,7 @@ class ModelInfoResponse(BaseModel):
     artifacts_ready: bool
     prediction_mode: str
     data_refresh: dict[str, object]
+    model_metadata: dict[str, object]
     disclaimer: str
 
 

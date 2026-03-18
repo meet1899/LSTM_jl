@@ -19,9 +19,12 @@ from src.config import TrainingConfig
 from src.data_loader import load_local_dataset
 from src.evaluate import SplitEvaluation, evaluate_predictions, evaluate_split, format_metrics
 from src.features import finalize_features
+from src.logging_config import get_logger
 from src.preprocessing import chronological_split, scale_splits_train_only
 from src.sequence import create_sequences, create_sequences_with_past_context
 from src.utils import ensure_dir, save_json, save_pickle
+
+logger = get_logger("src.train")
 
 
 @dataclass(frozen=True)
@@ -165,6 +168,14 @@ def train_model(df: pd.DataFrame, config: TrainingConfig) -> tuple[object, objec
     """Train the LSTM on train data and monitor validation loss."""
     keras = _require_tensorflow()
     set_random_seed(config.random_seed)
+    logger.info(
+        "training_started rows=%s lookback=%s features=%s epochs=%s batch_size=%s",
+        len(df),
+        config.lookback,
+        len(config.feature_cols),
+        config.epochs,
+        config.batch_size,
+    )
     models_dir = ensure_dir(config.models_dir)
     checkpoint_path = models_dir / config.checkpoint_name
 
@@ -175,6 +186,12 @@ def train_model(df: pd.DataFrame, config: TrainingConfig) -> tuple[object, objec
         lookback=config.lookback,
         train_ratio=config.train_ratio,
         val_ratio=config.val_ratio,
+    )
+    logger.info(
+        "training_data_prepared train=%s val=%s test=%s",
+        prepared.x_train.shape[0],
+        prepared.x_val.shape[0],
+        prepared.x_test.shape[0],
     )
 
     model = build_lstm_model(
@@ -205,6 +222,7 @@ def train_model(df: pd.DataFrame, config: TrainingConfig) -> tuple[object, objec
         callbacks=callbacks,
         verbose=0,
     )
+    logger.info("training_completed best_checkpoint=%s epochs_ran=%s", checkpoint_path, len(history.history.get("loss", [])))
 
     return model, history, prepared
 
@@ -258,6 +276,12 @@ def save_training_artifacts(results: TrainingArtifacts, config: TrainingConfig) 
         "test_predictions": results.test_results.predictions.tolist(),
     }
     save_json(predictions_payload, predictions_path)
+    logger.info(
+        "training_artifacts_saved model=%s metrics=%s predictions=%s",
+        model_path,
+        metrics_path,
+        predictions_path,
+    )
 
     return {
         "model": model_path,
@@ -345,6 +369,7 @@ def run_training_pipeline(
 ) -> TrainingArtifacts:
     """Convenience entrypoint for loading CSV data and training the model."""
     config = config or TrainingConfig()
+    logger.info("training_pipeline_started csv_path=%s", csv_path or config.raw_data_path)
     df = load_local_dataset(path=csv_path, config=config)
     df = finalize_features(df)
     results = train_and_evaluate(df=df, config=config)
@@ -359,5 +384,10 @@ def run_training_pipeline(
         artifact_paths = save_training_artifacts(results, config)
         for artifact_name, artifact_path in artifact_paths.items():
             print(f"Saved {artifact_name}:", artifact_path)
+    logger.info(
+        "training_pipeline_completed val_metrics=%s test_metrics=%s",
+        results.val_results.metrics,
+        results.test_results.metrics,
+    )
 
     return results

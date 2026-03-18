@@ -8,8 +8,10 @@ from pathlib import Path
 import pandas as pd
 
 from src.config import TrainingConfig
+from src.logging_config import get_logger
 
 REQUIRED_COLUMNS = {"date", "open", "high", "low", "close", "volume"}
+logger = get_logger("src.data_loader")
 
 
 def validate_stock_dataframe(df: pd.DataFrame) -> None:
@@ -33,10 +35,12 @@ def validate_stock_dataframe(df: pd.DataFrame) -> None:
     numeric_cols = ["open", "high", "low", "close", "volume"]
     if df[numeric_cols].isna().any().any():
         raise ValueError("The dataset contains missing numeric price/volume values.")
+    logger.info("stock_dataframe_validated rows=%s columns=%s", len(df), sorted(df.columns.tolist()))
 
 
 def load_stock_csv(path: str) -> pd.DataFrame:
     """Load stock data from CSV and sort it in chronological order."""
+    logger.info("loading_stock_csv path=%s", path)
     df = pd.read_csv(path)
     if "date" in df.columns:
         df["date"] = pd.to_datetime(df["date"])
@@ -64,6 +68,7 @@ def save_stock_csv(df: pd.DataFrame, path: str | Path) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False)
+    logger.info("stock_csv_saved path=%s rows=%s", path, len(df))
     return path
 
 
@@ -87,6 +92,7 @@ def save_refresh_metadata(metadata: dict[str, object], path: str | Path) -> Path
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         json.dump(metadata, handle, indent=2)
+    logger.info("refresh_metadata_saved path=%s", path)
     return path
 
 

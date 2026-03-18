@@ -17,6 +17,7 @@ from src.data_loader import (
     load_refresh_metadata,
 )
 from src.features import finalize_features
+from src.logging_config import get_logger
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 MODELS_DIR = ROOT_DIR / "models"
@@ -24,10 +25,13 @@ RESULTS_DIR = ROOT_DIR / "results"
 DISCLAIMER = "For educational use only. This app does not provide financial advice."
 AVAILABLE_BASELINES = ["naive_last_value", "moving_average", "linear_regression"]
 APP_CONFIG = TrainingConfig()
+logger = get_logger("app.backend.services")
 
 
 def _load_base_dataframe() -> pd.DataFrame:
-    return load_local_dataset(path=ROOT_DIR / APP_CONFIG.raw_data_path, config=APP_CONFIG)
+    dataset = load_local_dataset(path=ROOT_DIR / APP_CONFIG.raw_data_path, config=APP_CONFIG)
+    logger.info("base_dataset_loaded rows=%s path=%s", len(dataset), ROOT_DIR / APP_CONFIG.raw_data_path)
+    return dataset
 
 
 def get_available_tickers() -> list[str]:
@@ -42,6 +46,7 @@ def _get_ticker_frame(ticker: str) -> pd.DataFrame:
     else:
         filtered = df.copy()
     if filtered.empty:
+        logger.warning("ticker_not_found ticker=%s", ticker)
         raise ValueError(f"Ticker '{ticker}' is not available in the local dataset.")
     return filtered.reset_index(drop=True)
 
@@ -92,16 +97,24 @@ def load_prediction_artifacts() -> dict[str, object] | None:
     target_scaler_path = MODELS_DIR / "target_scaler.pkl"
 
     if not model_path or not feature_scaler_path.exists() or not target_scaler_path.exists():
+        logger.warning(
+            "prediction_artifacts_missing model_path=%s feature_scaler=%s target_scaler=%s",
+            model_path,
+            feature_scaler_path.exists(),
+            target_scaler_path.exists(),
+        )
         return None
 
     try:
+        logger.info("prediction_artifacts_loaded model_path=%s", model_path)
         return {
             "model": _load_keras_model(model_path),
             "feature_scaler": _load_pickle(feature_scaler_path),
             "target_scaler": _load_pickle(target_scaler_path),
             "model_path": model_path,
         }
-    except Exception:
+    except Exception as exc:
+        logger.exception("prediction_artifacts_load_failed detail=%s", exc)
         return None
 
 
@@ -112,10 +125,19 @@ def artifacts_ready() -> bool:
 def _prepare_recent_window(ticker: str, lookback_days: int, config: TrainingConfig) -> tuple[pd.DataFrame, np.ndarray]:
     raw_df, feature_df = _latest_feature_row(ticker, config)
     if len(feature_df) < lookback_days:
+        logger.warning(
+            "insufficient_history ticker=%s lookback_days=%s available_rows=%s",
+            ticker,
+            lookback_days,
+            len(feature_df),
+        )
         raise ValueError(
             f"Not enough feature rows for lookback_days={lookback_days}. Available rows: {len(feature_df)}."
         )
     recent_window = feature_df[list(config.feature_cols)].tail(lookback_days).to_numpy()
+    if np.isnan(recent_window).any():
+        logger.error("nan_in_recent_window ticker=%s lookback_days=%s", ticker, lookback_days)
+        raise ValueError("Recent feature window contains NaN values.")
     return raw_df, recent_window
 
 
@@ -148,6 +170,7 @@ def predict_next_day(ticker: str, lookback_days: int) -> dict[str, object]:
     baselines = {name: values[0] for name, values in baseline_predictions.items()}
 
     if not artifacts_ready():
+        logger.warning("prediction_fallback ticker=%s reason=artifacts_not_ready", ticker)
         return {
             "ticker": ticker.upper(),
             "lookback_days": lookback_days,
@@ -160,7 +183,8 @@ def predict_next_day(ticker: str, lookback_days: int) -> dict[str, object]:
 
     try:
         next_day_prediction = _predict_with_model(recent_window)
-    except Exception:
+    except Exception as exc:
+        logger.exception("prediction_fallback ticker=%s reason=model_prediction_failed detail=%s", ticker, exc)
         return {
             "ticker": ticker.upper(),
             "lookback_days": lookback_days,
@@ -189,6 +213,11 @@ def forecast_prices(ticker: str, lookback_days: int, horizon: int) -> dict[str, 
     baseline_predictions = _compute_baseline_predictions(recent_window, target_index, horizon=horizon)
 
     if not artifacts_ready():
+        logger.warning(
+            "forecast_fallback ticker=%s horizon=%s reason=artifacts_not_ready",
+            ticker,
+            horizon,
+        )
         return {
             "ticker": ticker.upper(),
             "lookback_days": lookback_days,
@@ -211,7 +240,13 @@ def forecast_prices(ticker: str, lookback_days: int, horizon: int) -> dict[str, 
             next_row = rolling_window[-1].copy()
             next_row[target_index] = predicted_close
             rolling_window = np.vstack([rolling_window[1:], next_row])
-    except Exception:
+    except Exception as exc:
+        logger.exception(
+            "forecast_fallback ticker=%s horizon=%s reason=model_prediction_failed detail=%s",
+            ticker,
+            horizon,
+            exc,
+        )
         return {
             "ticker": ticker.upper(),
             "lookback_days": lookback_days,
@@ -241,6 +276,7 @@ def get_metrics_payload() -> dict[str, object]:
     if metrics_path.exists():
         with metrics_path.open("r", encoding="utf-8") as handle:
             payload = json.load(handle)
+        logger.info("metrics_loaded path=%s", metrics_path)
         return {
             "lstm": payload.get("lstm", {}),
             "baselines": payload.get("baselines", {}),
@@ -276,6 +312,11 @@ def get_comparison_payload(split: str = "test") -> dict[str, object]:
 def get_model_info() -> dict[str, object]:
     config = APP_CONFIG
     refresh_metadata = load_refresh_metadata(ROOT_DIR / config.refresh_metadata_path, default={})
+    metadata_path = MODELS_DIR / "metadata.json"
+    model_metadata = {}
+    if metadata_path.exists():
+        with metadata_path.open("r", encoding="utf-8") as handle:
+            model_metadata = json.load(handle)
     return {
         "model_name": "LSTM Stock Predictor",
         "target_col": config.target_col,
@@ -285,5 +326,6 @@ def get_model_info() -> dict[str, object]:
         "artifacts_ready": artifacts_ready(),
         "prediction_mode": "trained_lstm" if artifacts_ready() else "naive_last_value_fallback",
         "data_refresh": refresh_metadata,
+        "model_metadata": model_metadata,
         "disclaimer": DISCLAIMER,
     }
