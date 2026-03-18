@@ -21,6 +21,7 @@ class ModelInfoResponse(BaseModel):
     available_baselines: list[str]
     artifacts_ready: bool
     prediction_mode: str
+    data_refresh: dict[str, object]
     disclaimer: str
 
 

@@ -1,0 +1,10 @@
+{
+  "source_type": "csv",
+  "row_count": 1259,
+  "tickers": [
+    "MSFT"
+  ],
+  "min_date": "2013-02-08",
+  "max_date": "2018-02-07",
+  "last_refresh_utc": "2026-03-18T21:58:44.185228+00:00"
+}

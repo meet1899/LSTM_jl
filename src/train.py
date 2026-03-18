@@ -16,7 +16,7 @@ from src.baselines import (
     naive_last_value_baseline,
 )
 from src.config import TrainingConfig
-from src.data_loader import load_stock_csv
+from src.data_loader import load_local_dataset
 from src.evaluate import SplitEvaluation, evaluate_predictions, evaluate_split, format_metrics
 from src.features import finalize_features
 from src.preprocessing import chronological_split, scale_splits_train_only
@@ -339,13 +339,13 @@ def train_and_evaluate(df: pd.DataFrame, config: TrainingConfig | None = None) -
 
 
 def run_training_pipeline(
-    csv_path: str,
+    csv_path: str | None = None,
     config: TrainingConfig | None = None,
     save_artifacts: bool = True,
 ) -> TrainingArtifacts:
     """Convenience entrypoint for loading CSV data and training the model."""
     config = config or TrainingConfig()
-    df = load_stock_csv(csv_path)
+    df = load_local_dataset(path=csv_path, config=config)
     df = finalize_features(df)
     results = train_and_evaluate(df=df, config=config)
 

@@ -10,6 +10,11 @@ from pathlib import Path
 class TrainingConfig:
     """Central training settings for the time-series pipeline."""
 
+    data_dir: Path = Path("data")
+    raw_data_path: Path = Path("data/MicrosoftStock.csv")
+    refresh_metadata_path: Path = Path("data/refresh_metadata.json")
+    default_ticker: str = "MSFT"
+    live_data_enabled: bool = False
     target_col: str = "close"
     feature_cols: tuple[str, ...] = (
         "open",

@@ -154,3 +154,149 @@ One important practical note from Steps 5 and 6:
 - the implementation is in place and verified at the file/output level
 - the current default training configuration is now heavy enough that it hits the environment timeout
 - that means the next pragmatic improvement is likely to add a lightweight debug config for faster verification runs while preserving the richer production-style defaults
+
+Step 8 Changes
+
+In [app/backend/schemas.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/app/backend/schemas.py), I expanded the backend API contracts:
+- added `ErrorResponse`
+- enriched `ModelInfoResponse` with `available_baselines`, `artifacts_ready`, and `prediction_mode`
+- added `ForecastRequest`
+- added `ForecastPoint`
+- added `ForecastResponse`
+This made the API more explicit and better aligned with the backend plan, especially for multi-step forecasting and frontend status handling.
+
+In [app/backend/services.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/app/backend/services.py), I restructured the backend into a more service-oriented API layer:
+- added `AVAILABLE_BASELINES`
+- added cached artifact loading with `load_prediction_artifacts()` using `lru_cache`
+- added `artifacts_ready()`
+- split prediction preparation into `_prepare_recent_window(...)`, `_compute_baseline_predictions(...)`, and `_predict_with_model(...)`
+- kept `predict_next_day(...)` but refactored it to use the new helpers
+- added `forecast_prices(...)` for backend multi-step forecasts
+- expanded `get_model_info()` so the app can tell whether the backend is serving a trained LSTM or a fallback mode
+These changes reduced repeated model/scaler loading, improved service boundaries, and prepared the backend for richer frontend usage.
+
+In [app/backend/main.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/app/backend/main.py), I added the `POST /forecast` endpoint and wired it to `forecast_prices(...)`. I also registered the forecast schemas and the 400 error model there. The backend route set now includes:
+- `/health`
+- `/model-info`
+- `/history`
+- `/predict`
+- `/forecast`
+- `/metrics`
+- `/comparison`
+
+In [tests/test_backend_api.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/tests/test_backend_api.py), I added a backend API test suite covering:
+- `/health`
+- `/model-info`
+- `/history`
+- `/predict`
+- `/forecast`
+
+In [requirements.txt](/C:/Users/meetp/files/PROJECTS/LSTM_jl/requirements.txt), I added `pytest` for backend testing.
+
+During Step 8 verification:
+- the backend code compiled cleanly
+- service-level smoke tests confirmed `/model-info` and forecast logic worked
+- once I switched to the `.venv` interpreter explicitly, the backend API tests passed:
+  - `5 passed` for `tests/test_backend_api.py`
+- the only warning was a pytest cache permission warning that did not affect test results
+
+Step 9 Changes
+
+In [app/frontend/streamli_app.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/app/frontend/streamli_app.py), I rebuilt the Streamlit UI into the dashboard structure described in the plan:
+- added stronger sidebar controls for ticker, lookback days, forecast horizon, and evaluation split
+- added a model status panel showing `prediction_mode`, `artifacts_ready`, available baselines, and the disclaimer
+- added a historical price chart section
+- added a volume chart section
+- added a next-day prediction summary with delta from latest close
+- added baseline prediction tables
+- added a forecast section powered by `/forecast`
+- added an actual-vs-predicted section
+- replaced raw JSON metrics with metric cards for MAE, RMSE, MAPE, and direction accuracy
+- added a baseline metrics table
+- added explainability and limitations sections
+This changed the frontend from a thin API viewer into a real dashboard.
+
+I also added frontend helper functions inside [app/frontend/streamli_app.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/app/frontend/streamli_app.py):
+- `fetch_json(...)`
+- `metric_card_columns(...)`
+- `build_baseline_prediction_table(...)`
+- `build_baseline_metric_table(...)`
+- `build_forecast_frame(...)`
+These keep the UI logic organized and easier to extend.
+
+One important structural fix in Step 9 was wrapping the page in `main()` and only calling it under `if __name__ == "__main__":`. That made the module import-safe for checks and tooling instead of making backend requests at import time.
+
+During Step 9 verification:
+- the frontend compiled cleanly with the `.venv` interpreter
+- the module imported successfully after the `main()` refactor
+
+App Run/Stop and Launch Verification Changes
+
+After Step 9, I added convenience scripts so the app can be started and stopped more easily:
+
+In [run_app.ps1](/C:/Users/meetp/files/PROJECTS/LSTM_jl/run_app.ps1), I added a launcher that:
+- uses `.\.venv\Scripts\python.exe` explicitly
+- starts FastAPI on `127.0.0.1:8000`
+- starts Streamlit on `127.0.0.1:8501`
+- prints the URLs to open
+
+In [stop_app.ps1](/C:/Users/meetp/files/PROJECTS/LSTM_jl/stop_app.ps1), I added a matching shutdown script that:
+- finds `.venv` Python processes for `uvicorn app.backend.main:app`
+- finds `.venv` Python processes for `streamlit run app/frontend/streamli_app.py`
+- stops them by PID
+
+I also verified the combined app stack over live HTTP:
+- FastAPI `/health` returned `200`
+- Streamlit root page returned `200`
+- `/model-info` returned `prediction_mode`
+- `/predict` returned a valid prediction payload
+- `/forecast` returned the expected number of points
+At the time of that verification, the app was still using `naive_last_value_fallback` because the saved trained artifacts were not aligned with the latest feature-engineered training pipeline.
+
+Step 10 Changes
+
+In [src/config.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/config.py), I added ingestion-related settings:
+- `data_dir`
+- `raw_data_path`
+- `refresh_metadata_path`
+- `default_ticker`
+- `live_data_enabled`
+This moved dataset assumptions out of the backend and training code.
+
+In [src/data_loader.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/data_loader.py), I expanded the file into a real ingestion module:
+- added `validate_stock_dataframe(...)`
+- added `load_local_dataset(...)`
+- added `get_available_tickers_from_data(...)`
+- added `save_stock_csv(...)`
+- added `build_refresh_metadata(...)`
+- added `save_refresh_metadata(...)`
+- added `load_refresh_metadata(...)`
+The loader now validates required columns, empty data, duplicate date rows, missing dates, and missing numeric values before the rest of the pipeline uses the dataset.
+
+In [src/update_data.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/update_data.py), I added a refresh utility that:
+- loads and validates the canonical local dataset
+- builds refresh metadata
+- writes `data/refresh_metadata.json`
+I also fixed it so it can be run directly from the repo root with the `.venv` interpreter.
+
+In [src/train.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/train.py), I updated `run_training_pipeline(...)` so it uses `load_local_dataset(...)` instead of directly reading a CSV with `pd.read_csv(...)`. That means training now goes through the same ingestion/validation path as the app.
+
+In [app/backend/services.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/app/backend/services.py), I refactored the backend to depend on the ingestion layer instead of a single hardcoded file path:
+- removed the old direct `DATA_PATH` usage
+- dataset loading now uses `load_local_dataset(...)`
+- ticker discovery now uses `get_available_tickers_from_data(...)`
+- model info now includes refresh metadata loaded from `data/refresh_metadata.json`
+
+In [app/backend/schemas.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/app/backend/schemas.py), I updated `ModelInfoResponse` so it can expose `data_refresh`.
+
+During Step 10 verification:
+- the updated ingestion and backend files compiled successfully
+- `src/update_data.py` ran successfully with the `.venv` interpreter
+- [refresh_metadata.json](/C:/Users/meetp/files/PROJECTS/LSTM_jl/data/refresh_metadata.json) was created with:
+  - `source_type: csv`
+  - `row_count: 1259`
+  - `tickers: ['MSFT']`
+  - `min_date: 2013-02-08`
+  - `max_date: 2018-02-07`
+  - `last_refresh_utc: ...`
+- backend ingestion smoke tests confirmed ticker discovery and model info still worked after the refactor

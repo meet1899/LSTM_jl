@@ -11,26 +11,28 @@ import numpy as np
 import pandas as pd
 
 from src.config import TrainingConfig
-from src.data_loader import load_stock_csv
+from src.data_loader import (
+    get_available_tickers_from_data,
+    load_local_dataset,
+    load_refresh_metadata,
+)
 from src.features import finalize_features
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-DATA_PATH = ROOT_DIR / "data" / "MicrosoftStock.csv"
 MODELS_DIR = ROOT_DIR / "models"
 RESULTS_DIR = ROOT_DIR / "results"
 DISCLAIMER = "For educational use only. This app does not provide financial advice."
 AVAILABLE_BASELINES = ["naive_last_value", "moving_average", "linear_regression"]
+APP_CONFIG = TrainingConfig()
 
 
 def _load_base_dataframe() -> pd.DataFrame:
-    return load_stock_csv(str(DATA_PATH))
+    return load_local_dataset(path=ROOT_DIR / APP_CONFIG.raw_data_path, config=APP_CONFIG)
 
 
 def get_available_tickers() -> list[str]:
     df = _load_base_dataframe()
-    if "Name" in df.columns:
-        return sorted(df["Name"].dropna().unique().tolist())
-    return ["MSFT"]
+    return get_available_tickers_from_data(df, default_ticker=APP_CONFIG.default_ticker)
 
 
 def _get_ticker_frame(ticker: str) -> pd.DataFrame:
@@ -138,7 +140,7 @@ def _predict_with_model(recent_window: np.ndarray) -> float:
 
 
 def predict_next_day(ticker: str, lookback_days: int) -> dict[str, object]:
-    config = TrainingConfig()
+    config = APP_CONFIG
     raw_df, recent_window = _prepare_recent_window(ticker, lookback_days, config)
     latest_close = float(raw_df.iloc[-1]["close"])
     target_index = list(config.feature_cols).index(config.target_col)
@@ -181,7 +183,7 @@ def predict_next_day(ticker: str, lookback_days: int) -> dict[str, object]:
 
 
 def forecast_prices(ticker: str, lookback_days: int, horizon: int) -> dict[str, object]:
-    config = TrainingConfig()
+    config = APP_CONFIG
     _, recent_window = _prepare_recent_window(ticker, lookback_days, config)
     target_index = list(config.feature_cols).index(config.target_col)
     baseline_predictions = _compute_baseline_predictions(recent_window, target_index, horizon=horizon)
@@ -272,7 +274,8 @@ def get_comparison_payload(split: str = "test") -> dict[str, object]:
 
 
 def get_model_info() -> dict[str, object]:
-    config = TrainingConfig()
+    config = APP_CONFIG
+    refresh_metadata = load_refresh_metadata(ROOT_DIR / config.refresh_metadata_path, default={})
     return {
         "model_name": "LSTM Stock Predictor",
         "target_col": config.target_col,
@@ -281,5 +284,6 @@ def get_model_info() -> dict[str, object]:
         "available_baselines": AVAILABLE_BASELINES,
         "artifacts_ready": artifacts_ready(),
         "prediction_mode": "trained_lstm" if artifacts_ready() else "naive_last_value_fallback",
+        "data_refresh": refresh_metadata,
         "disclaimer": DISCLAIMER,
     }
