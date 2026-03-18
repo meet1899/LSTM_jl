@@ -22,6 +22,7 @@ def test_model_info() -> None:
     assert "tickers" in payload
     assert "artifacts_ready" in payload
     assert "prediction_mode" in payload
+    assert "data_refresh" in payload
 
 
 def test_history() -> None:
@@ -48,3 +49,15 @@ def test_forecast() -> None:
     assert payload["ticker"] == "MSFT"
     assert payload["horizon"] == 3
     assert len(payload["points"]) == 3
+
+
+def test_metrics_and_comparison() -> None:
+    metrics_response = client.get("/metrics")
+    comparison_response = client.get("/comparison", params={"split": "test"})
+    assert metrics_response.status_code == 200
+    assert comparison_response.status_code == 200
+
+
+def test_invalid_ticker_returns_400() -> None:
+    response = client.post("/predict", json={"ticker": "INVALID", "lookback_days": 60})
+    assert response.status_code == 400

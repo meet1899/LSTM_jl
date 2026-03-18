@@ -300,3 +300,69 @@ During Step 10 verification:
   - `max_date: 2018-02-07`
   - `last_refresh_utc: ...`
 - backend ingestion smoke tests confirmed ticker discovery and model info still worked after the refactor
+
+Step 11 Changes
+
+In [tests/conftest.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/tests/conftest.py), I added shared pytest fixtures:
+- `sample_stock_df`
+- `scaled_target_scaler`
+These fixtures reduce duplication across the test suite and make the tests easier to read and maintain.
+
+I added unit tests for the preprocessing layer in [test_preprocessing.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/tests/test_preprocessing.py):
+- verified chronological split sizes
+- verified train/val/test order is preserved
+- verified train-only scaling statistics
+These protect the no-leakage foundation from Step 3A.
+
+I added sequence tests in [test_sequence.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/tests/test_sequence.py):
+- verified standard sequence output shapes
+- verified mismatched input lengths raise errors
+- verified `create_sequences_with_past_context(...)` uses prior history correctly
+These protect the lookback/window logic used by training and evaluation.
+
+I added feature engineering tests in [test_features.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/tests/test_features.py):
+- verified all engineered columns are created
+- verified `finalize_features(...)` drops NaN rows from rolling/lags
+These protect the Step 4 feature pipeline.
+
+I added ingestion tests in [test_data_loader.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/tests/test_data_loader.py):
+- validated good stock data
+- rejected missing columns
+- verified ticker extraction
+- verified refresh metadata save/load behavior
+This protects the Step 10 ingestion and validation layer.
+
+I added evaluation tests in [test_evaluate.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/tests/test_evaluate.py):
+- verified expected regression metric keys
+- verified direction accuracy behavior
+- verified `evaluate_predictions(...)` returns the expected `SplitEvaluation` structure
+These protect the Step 3C and Step 3D evaluation logic.
+
+I added baseline tests in [test_baselines.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/tests/test_baselines.py):
+- verified naive baseline output
+- verified moving average baseline output
+- verified linear regression baseline prediction shape
+These protect the LSTM-vs-baseline comparison logic from Step 3D.
+
+I added training helper tests in [test_train.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/tests/test_train.py):
+- verified `prepare_training_data(...)` returns 3D sequence tensors
+- verified `run_baselines(...)` returns all expected baseline names
+These protect the orchestration layer without requiring long TensorFlow training runs.
+
+I expanded the backend API tests in [test_backend_api.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/tests/test_backend_api.py):
+- kept coverage for `/health`, `/model-info`, `/history`, `/predict`, and `/forecast`
+- added `/metrics`
+- added `/comparison`
+- added invalid ticker handling for `/predict`
+- verified `data_refresh` is present in `/model-info`
+This protects the frontend/backend contract introduced in Steps 8, 9, and 10.
+
+During Step 11 verification:
+- the test files compiled successfully
+- I ran the full suite with the project `.venv`:
+  - `.\.venv\Scripts\python.exe -m pytest tests -q`
+- final result:
+  - `26 passed`
+- one pytest cache warning remained because this environment cannot write `.pytest_cache` cleanly, but it did not affect test execution
+
+Step 11 completed with a passing multi-layer test suite covering the ML core, ingestion layer, and backend API.
