@@ -366,3 +366,62 @@ During Step 11 verification:
 - one pytest cache warning remained because this environment cannot write `.pytest_cache` cleanly, but it did not affect test execution
 
 Step 11 completed with a passing multi-layer test suite covering the ML core, ingestion layer, and backend API.
+
+Step 12 Changes
+
+In [src/logging_config.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/logging_config.py), I added centralized logging helpers:
+- `configure_logging()`
+- `get_logger()`
+This gave the project one shared logging format instead of scattered print/debug output.
+
+In [app/backend/main.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/app/backend/main.py), I added request timing middleware and endpoint-level logging:
+- every request now logs method, path, status code, and duration in milliseconds
+- `/health`, `/model-info`, `/history`, `/predict`, `/forecast`, `/metrics`, and `/comparison` now log success/failure events
+This implemented the request-time and latency visibility described in the plan.
+
+In [app/backend/services.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/app/backend/services.py), I added service-layer validation and operational logging:
+- logs when the base dataset is loaded
+- logs missing ticker failures
+- logs missing or failed model/scaler artifact loads
+- logs when prediction falls back to the naive baseline
+- logs when forecast falls back to the naive baseline
+- added explicit NaN checking for recent feature windows before scaling/inference
+- logs metrics loading
+- added loading of `models/metadata.json` into the `/model-info` response as `model_metadata`
+This made backend failures and fallback behavior explicit instead of silent.
+
+Because `/model-info` now includes model metadata, I updated [app/backend/schemas.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/app/backend/schemas.py) so `ModelInfoResponse` includes:
+- `model_metadata`
+
+In [src/data_loader.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/data_loader.py), I added ingestion logging:
+- logs CSV load start
+- logs successful dataframe validation
+- logs saved CSV writes
+- logs refresh metadata writes
+This makes ingestion and data validation behavior observable.
+
+In [src/update_data.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/update_data.py), I added refresh lifecycle logs:
+- refresh start with dataset path
+- refresh completion with row count, min date, max date, and metadata path
+This makes metadata refresh operations traceable.
+
+In [src/train.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/src/train.py), I added training lifecycle logging:
+- logs training start with row count, lookback, feature count, epochs, and batch size
+- logs prepared train/val/test sizes
+- logs training completion and checkpoint path
+- logs artifact save completion
+- logs training pipeline completion with validation and test metrics
+This makes the training flow much easier to debug and monitor.
+
+During Step 12 verification:
+- all updated files compiled successfully
+- `src/update_data.py` ran cleanly and emitted the new ingestion logs
+- backend service smoke tests worked and now log meaningful fallback/error details
+- the new logs surfaced a useful issue clearly:
+  - the current `models/best_lstm.keras` artifact is not loadable
+  - backend prediction therefore falls back intentionally to `naive_last_value_fallback`
+- I reran the full test suite:
+  - `.\.venv\Scripts\python.exe -m pytest tests -q`
+  - result: `26 passed`
+
+Step 12 completed with centralized logging, request timing, clearer validation/fallback handling, and a still-passing test suite.
