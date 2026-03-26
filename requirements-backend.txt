@@ -4,6 +4,3 @@ scikit-learn
 tensorflow
 fastapi
 uvicorn
-streamlit
-requests
-pytest

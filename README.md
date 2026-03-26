@@ -92,7 +92,9 @@ Or call the interpreter explicitly:
 ### 2. Install dependencies
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-backend.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-frontend.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 ```
 
 ## Running the App
@@ -132,6 +134,48 @@ Frontend:
 ```powershell
 .\.venv\Scripts\python.exe -m streamlit run app/frontend/streamli_app.py --server.headless true --server.port 8501
 ```
+
+## Docker Deployment
+
+This repo now supports separate backend and frontend container images.
+
+### Files
+
+- [Dockerfile.backend](/C:/Users/meetp/files/PROJECTS/LSTM_jl/Dockerfile.backend)
+- [Dockerfile.frontend](/C:/Users/meetp/files/PROJECTS/LSTM_jl/Dockerfile.frontend)
+- [compose.yaml](/C:/Users/meetp/files/PROJECTS/LSTM_jl/compose.yaml)
+- [.dockerignore](/C:/Users/meetp/files/PROJECTS/LSTM_jl/.dockerignore)
+
+### Build and run locally with Docker Compose
+
+```powershell
+docker compose up --build
+```
+
+This starts:
+
+- backend on `http://127.0.0.1:8000`
+- frontend on `http://127.0.0.1:8501`
+
+### Stop Docker services
+
+```powershell
+docker compose down
+```
+
+### Deployment notes
+
+- the frontend reads the backend URL from `API_BASE_URL`
+- in Compose, it is set to `http://backend:8000`
+- backend and frontend are built as separate services/images
+- both images include container healthchecks
+- both images run as a non-root user
+
+### Split requirements
+
+- [requirements-backend.txt](/C:/Users/meetp/files/PROJECTS/LSTM_jl/requirements-backend.txt): backend runtime dependencies
+- [requirements-frontend.txt](/C:/Users/meetp/files/PROJECTS/LSTM_jl/requirements-frontend.txt): frontend runtime dependencies
+- [requirements-dev.txt](/C:/Users/meetp/files/PROJECTS/LSTM_jl/requirements-dev.txt): development and test dependencies
 
 ## Training Pipeline
 

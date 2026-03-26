@@ -425,3 +425,138 @@ During Step 12 verification:
   - result: `26 passed`
 
 Step 12 completed with centralized logging, request timing, clearer validation/fallback handling, and a still-passing test suite.
+
+Step 13 Changes
+
+In [README.md](/C:/Users/meetp/files/PROJECTS/LSTM_jl/README.md), I replaced the empty file with a full project guide that now documents:
+- project overview
+- current implementation status
+- folder structure
+- local setup using `.venv`
+- how to run the app
+- how to run the training and data refresh utilities
+- evaluation methodology
+- backend API summary
+- frontend dashboard summary
+- testing
+- logging
+- limitations
+- disclaimer
+- screenshot placeholders
+- links to `plan.txt` and `executed.txt`
+This made the repo understandable without needing chat history.
+
+In [CHANGELOG.md](/C:/Users/meetp/files/PROJECTS/LSTM_jl/CHANGELOG.md), I added a concise project changelog summarizing the major milestone groups:
+- Step 3A-3D
+- Step 4-6
+- Step 8-10
+- Step 11-12
+This gives the repo a cleaner high-level history of what was implemented.
+
+In [CONTRIBUTING.md](/C:/Users/meetp/files/PROJECTS/LSTM_jl/CONTRIBUTING.md), I added a contributor workflow guide covering:
+- `.venv` usage
+- running the app
+- stopping the app
+- running tests
+- refreshing data
+- general development expectations
+This made the repo feel more complete and easier to work in.
+
+During Step 13 verification:
+- I read back all three documentation files
+- I cross-checked them against the current repo contents
+- the documented commands and files matched the current project structure
+
+Step 13 completed as a documentation pass across the repo.
+
+Step 14 Changes
+
+Initial backend Docker work:
+
+In [Dockerfile.backend](/C:/Users/meetp/files/PROJECTS/LSTM_jl/Dockerfile.backend), the first backend image draft was added. It already had the correct base image and uvicorn startup command, but it still needed improvements.
+
+Backend Docker improvements:
+
+I updated [Dockerfile.backend](/C:/Users/meetp/files/PROJECTS/LSTM_jl/Dockerfile.backend) to make it more professional:
+- switched it to install from `requirements-backend.txt`
+- added creation of a non-root user `appuser`
+- switched the container to run as `appuser`
+- added a backend `HEALTHCHECK` against `http://127.0.0.1:8000/health`
+- kept uvicorn binding on `0.0.0.0:8000`
+These changes made the backend image smaller, safer, and more deployment-friendly.
+
+In [.dockerignore](/C:/Users/meetp/files/PROJECTS/LSTM_jl/.dockerignore), I tightened the Docker build context:
+- excluded Python/cache/log files
+- excluded `.venv`
+- excluded notebooks and notebook checkpoints
+- excluded `test_artifacts_temp/`
+- updated the Docker ignore entry to match `compose.yaml`
+This reduces image bloat and prevents local junk from being copied into Docker builds.
+
+Dependency split for deployment:
+
+I reviewed and aligned the split dependency files:
+- [requirements-backend.txt](/C:/Users/meetp/files/PROJECTS/LSTM_jl/requirements-backend.txt) is now for backend runtime dependencies
+- [requirements-frontend.txt](/C:/Users/meetp/files/PROJECTS/LSTM_jl/requirements-frontend.txt) is now for frontend runtime dependencies
+- [requirements-dev.txt](/C:/Users/meetp/files/PROJECTS/LSTM_jl/requirements-dev.txt) was added for development/test dependencies
+
+I specifically removed `pytest` from [requirements-frontend.txt](/C:/Users/meetp/files/PROJECTS/LSTM_jl/requirements-frontend.txt) and moved it into [requirements-dev.txt](/C:/Users/meetp/files/PROJECTS/LSTM_jl/requirements-dev.txt).
+
+Frontend deployment work:
+
+I added [Dockerfile.frontend](/C:/Users/meetp/files/PROJECTS/LSTM_jl/Dockerfile.frontend):
+- installs from `requirements-frontend.txt`
+- sets `API_BASE_URL=http://backend:8000`
+- creates and uses non-root user `appuser`
+- exposes port `8501`
+- adds a Streamlit healthcheck on `/_stcore/health`
+- starts Streamlit with `--server.address=0.0.0.0`
+This made the frontend independently deployable as its own service.
+
+I updated [app/frontend/streamli_app.py](/C:/Users/meetp/files/PROJECTS/LSTM_jl/app/frontend/streamli_app.py) so the frontend backend URL is now environment-driven:
+- replaced the hardcoded `http://127.0.0.1:8000`
+- now uses `API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")`
+This is required for separate frontend/backend deployment.
+
+Compose orchestration:
+
+I added [compose.yaml](/C:/Users/meetp/files/PROJECTS/LSTM_jl/compose.yaml) with two services:
+- `backend`
+- `frontend`
+
+The compose file:
+- builds each service from its own Dockerfile
+- maps ports `8000:8000` and `8501:8501`
+- passes `API_BASE_URL=http://backend:8000` into the frontend
+- waits for backend health before starting the frontend with `depends_on`
+- adds healthchecks to both services
+This gives the repo a local multi-service deployment workflow that mirrors the intended production split.
+
+Documentation updates for deployment:
+
+I updated [README.md](/C:/Users/meetp/files/PROJECTS/LSTM_jl/README.md) again so the Docker deployment path is documented:
+- split dependency installation instructions
+- Docker deployment section
+- descriptions of `Dockerfile.backend`, `Dockerfile.frontend`, `compose.yaml`, and `.dockerignore`
+- `docker compose up --build`
+- `docker compose down`
+- notes about `API_BASE_URL`
+- explanation of the split requirements files
+
+Verification and review findings during Step 14:
+
+- I confirmed Docker was installed locally, but direct Docker build verification from the sandbox was limited by local Docker permission issues under `C:\Users\meetp\.docker\...`
+- I reviewed the backend image and identified the following improvements, which were then implemented:
+  - missing `.dockerignore`
+  - backend image installing frontend/test dependencies
+  - missing backend healthcheck
+  - running as root
+- later, when you ran `docker compose up --build`, Docker reported that `pytest-cache-files-*` directories were still being pulled into the build context; that confirmed why `.dockerignore` completeness matters in this repo
+
+Step 14 completed on the repo side with:
+- separate backend/frontend Dockerfiles
+- split deployment requirements
+- Docker build context cleanup
+- compose-based two-service orchestration
+- env-based frontend/backend wiring
+- deployment documentation in README
